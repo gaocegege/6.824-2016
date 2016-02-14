@@ -24,5 +24,40 @@ func (mr *Master) schedule(phase jobPhase) {
 	//
 	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
 	//
+
+	doneChannel := make(chan int, ntasks)
+
+	for i := 0; i < ntasks; i++ {
+		go func(taskNumber int, nios int, phase jobPhase) {
+			for {
+				// get a worker
+				worker := <-mr.registerChannel
+
+				// rpc call
+				taskArgs := &DoTaskArgs{}
+				taskArgs.File = mr.files[taskNumber]
+				taskArgs.JobName = mr.jobName
+				taskArgs.NumOtherPhase = nios
+				taskArgs.Phase = phase
+				taskArgs.TaskNumber = taskNumber
+				ok := call(worker, "Worker.DoTask", taskArgs, nil)
+
+				// success
+				if ok == true {
+					go func() {
+						// the order to send is important, must send taskNumber to doneChannel first
+						doneChannel <- taskNumber
+						mr.registerChannel <- worker
+					}()
+					return
+				}
+			}
+		}(i, nios, phase)
+	}
+
+	for i := 0; i < ntasks; i++ {
+		<-doneChannel
+	}
+
 	fmt.Printf("Schedule: %v phase done\n", phase)
 }
