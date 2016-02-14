@@ -1,6 +1,6 @@
 # 6.824-Distributed-Systems-Lab
 
-16年似乎换了Lab，Lab变成了RAFT，因此重开
+16年似乎换了Lab，因此重开
 
 ## 课程主页
 
