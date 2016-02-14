@@ -10,7 +10,7 @@ Implementation for MIT 6.824 Distributed System 2016
 
 ## Blog
 
-* [MIT分布式系统Lab1分享](http://gaocegege.com/Blog/distributed%20system/ds-lab1/)
+* [MIT分布式系统Lab1分享](http://gaocegege.com/Blog/distributed%20system/ds-lab1/) & [MIT分布式系统Lab1分享-2016](http://gaocegege.com/Blog/distributed%20system/ds-lab1-2016)
 
 ## Timeline
 
