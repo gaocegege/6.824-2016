@@ -9,3 +9,4 @@ else
   echo "Passed test" > /dev/stderr
 fi
 
+rm mrtmp.*
