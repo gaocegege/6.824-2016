@@ -44,6 +44,8 @@ func doMap(
 	//     err := enc.Encode(&kv)
 	//
 	// Remember to close the file after you have written all the values!
+
+	// open the file, and read it
 	file, err := os.Open(inFile)
 	if err != nil {
 		log.Fatal("DoMap: ", err)
@@ -61,8 +63,10 @@ func doMap(
 	}
 	file.Close()
 
-	res := mapF("?", string(b))
+	// call mapF func
+	res := mapF(inFile, string(b))
 
+	// store results to reduce file
 	for r := 0; r < nReduce; r++ {
 		file, err = os.Create(reduceName(jobName, mapTaskNumber, r))
 		if err != nil {
