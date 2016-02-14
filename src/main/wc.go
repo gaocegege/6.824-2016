@@ -22,7 +22,7 @@ func mapF(document string, value string) (res []mapreduce.KeyValue) {
 	})
 
 	// emit
-	result := make([]mapreduce.KeyValue, 0)
+	var result []mapreduce.KeyValue
 	for _, w := range words {
 		result = append(result, mapreduce.KeyValue{w, "1"})
 	}
