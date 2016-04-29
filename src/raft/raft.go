@@ -17,13 +17,46 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "labrpc"
+import (
+	"labrpc"
+	"log"
+	"math/rand"
+	"sync"
+	"time"
+)
 
 // import "bytes"
 // import "encoding/gob"
 
+// Role represents the role of a Raft peer
+type Role int
 
+const (
+	// Follower role
+	Follower Role = iota
+	// Candidate role
+	Candidate
+	// Leader role
+	Leader
+)
+
+var (
+	// MinimumElectionTimeoutMS can be set at package initialization. It may be
+	// raised to achieve more reliable replication in slow networks, or lowered
+	// to achieve faster replication in fast networks. Lowering is not
+	// recommended.
+	MinimumElectionTimeoutMS int32 = 2000
+
+	maximumElectionTimeoutMS = 2 * MinimumElectionTimeoutMS
+)
+
+// electionTimeout returns a variable time.Duration, between the minimum and
+// maximum election timeouts.
+func electionTimeout() time.Duration {
+	n := rand.Intn(int(maximumElectionTimeoutMS - MinimumElectionTimeoutMS))
+	d := int(MinimumElectionTimeoutMS) + n
+	return time.Duration(d) * time.Millisecond
+}
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -50,16 +83,36 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// Persistent state on all servers
+	currentTerm int
+	votedFor    int
+	//logs []byte
+
+	// Volatile state on all servers
+	commitIndex int
+	lastApplied int
+
+	//Leader state will reinit on election.
+	nextIndex  []int
+	matchIndex []int
+
+	// defined for ease of implementation
+	role         Role
+	eventBus     chan *event
+	electionTick <-chan time.Time
 }
 
-// return currentTerm and whether this server
+type event struct {
+	peer        int
+	requestType interface{}
+}
+
+// GetState return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
-	var term int
-	var isleader bool
-	// Your code here.
-	return term, isleader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm, rf.role == Leader
 }
 
 //
@@ -90,28 +143,54 @@ func (rf *Raft) readPersist(data []byte) {
 	// d.Decode(&rf.yyy)
 }
 
-
-
-
 //
-// example RequestVote RPC arguments structure.
+// RequestVoteArgs is a RPC arguments structure.
 //
 type RequestVoteArgs struct {
 	// Your data here.
+	Term         int
+	CandidateID  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 //
-// example RequestVote RPC reply structure.
+// RequestVoteReply is a RPC reply structure.
 //
 type RequestVoteReply struct {
 	// Your data here.
+	Term        int
+	VoteGranted bool
 }
 
 //
-// example RequestVote RPC handler.
+// RequestVote will give vote
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if args.Term < rf.currentTerm {
+		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+	}
+
+	rf.currentTerm = args.Term
+	reply.Term = args.Term
+
+	// buggy
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
+		reply.VoteGranted = true
+		rf.votedFor = args.CandidateID
+	} else {
+		reply.VoteGranted = false
+	}
+
+	rf.eventBus <- &event{
+		peer:        rf.me,
+		requestType: &args,
+	}
+	return
 }
 
 //
@@ -136,7 +215,6 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -151,10 +229,10 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	log.Println("Start a command.")
 	index := -1
 	term := -1
 	isLeader := true
-
 
 	return index, term, isLeader
 }
@@ -186,12 +264,168 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.eventBus = make(chan *event, 10)
 
 	// Your initialization code here.
+	rf.currentTerm = 0
+	rf.votedFor = -1
+
+	// Set the role to follower.
+	rf.role = Follower
+	// Set the timeout to work.
+	rf.resetElectionTimeout()
+
+	// Set the log.
+	log.SetPrefix("[Raft]-")
+	log.Printf("Start a new Raft peer %d.\n", rf.me)
+
+	go rf.runServerLoop()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-
 	return rf
 }
+
+func (rf *Raft) runServerLoop() {
+	for {
+		switch rf.role {
+		case Leader:
+			rf.runLeaderLoop()
+		case Candidate:
+			rf.runCandidateLoop()
+		case Follower:
+			rf.runFollowerLoop()
+		}
+	}
+}
+
+func (rf *Raft) runFollowerLoop() {
+	for rf.role == Follower {
+		select {
+		// Upgrade to candidate.
+		case <-rf.electionTick:
+			log.Printf("Peer %d upgrades to a candidate.", rf.me)
+			rf.role = Candidate
+			rf.currentTerm++
+			rf.votedFor = -1
+			return
+		case e := <-rf.eventBus:
+			switch e.requestType.(type) {
+			case *RequestVoteArgs:
+				// TODO
+				rf.resetElectionTimeout()
+				log.Printf("Peer %d receives RequestVote from %d.", rf.me, e.requestType.(*RequestVoteArgs).CandidateID)
+				return
+			}
+		}
+	}
+}
+
+func (rf *Raft) runCandidateLoop() {
+	if rf.votedFor != -1 {
+		log.Println("Error: voteFor is not -1 in candidate loop.")
+	}
+
+	for i := 0; i < len(rf.peers); i++ {
+		if i != rf.me {
+			log.Printf("Peer %d sends RequestVote to %d.", rf.me, i)
+			requestVoteReply := &RequestVoteReply{}
+			ok := rf.sendRequestVote(i, RequestVoteArgs{
+				Term:        rf.currentTerm,
+				CandidateID: rf.me,
+				// TODO
+				LastLogIndex: -1,
+				LastLogTerm:  -1,
+			}, requestVoteReply)
+			if !ok {
+				log.Panic("Fail to send RequestVote to other peers.")
+			}
+
+			rf.eventBus <- &event{
+				peer:        i,
+				requestType: requestVoteReply,
+			}
+		}
+	}
+
+	log.Printf("Peer %d receives all the RequestVoteReplys.", rf.me)
+	var votes = map[int]bool{rf.me: true}
+
+	for rf.role == Candidate {
+		select {
+		case <-rf.electionTick:
+			log.Printf("Peer %d starts a new election.", rf.me)
+			rf.resetElectionTimeout()
+			rf.currentTerm++
+			rf.votedFor = -1
+			return
+		case e := <-rf.eventBus:
+			switch e.requestType.(type) {
+			case *RequestVoteReply:
+				rf.handleRequestVoteReply(*e, &votes)
+			}
+		}
+	}
+}
+
+func (rf *Raft) runLeaderLoop() {
+	// TODO: heartbeat
+}
+
+// resetElectionTimeout will reset the timeout chan.
+func (rf *Raft) resetElectionTimeout() {
+	rf.electionTick = time.NewTimer(electionTimeout()).C
+}
+
+func (rf *Raft) handleRequestVoteReply(e event, votes *map[int]bool) {
+	var reply = e.requestType.(*RequestVoteReply)
+	if reply.Term > rf.currentTerm {
+		rf.role = Follower
+		rf.votedFor = -1
+	}
+
+	if reply.Term < rf.currentTerm {
+		return
+	}
+
+	if reply.VoteGranted {
+		(*votes)[e.peer] = true
+	}
+	var count = 0
+	for _, voteGranted := range *votes {
+		if voteGranted {
+			count++
+		}
+	}
+
+	if count > len(rf.peers)/2 {
+		log.Printf("Peer %d has become the new leader. Cong!", rf.me)
+		rf.role = Leader
+		rf.votedFor = rf.me
+	}
+}
+
+// func (rf *Raft) requestVoteHandler(rv RequestVoteArgs) (*RequestVoteReply, bool) {
+// 	// If the request is from an old term, reject.
+// 	if rv.Term < rf.currentTerm {
+// 		return &RequestVoteReply {
+// 			Term: rf.currentTerm,
+// 			VoteGranted: false,
+// 		}, false
+// 	}
+
+// 	stepDown := false
+// 	if rv.Term > rf.currentTerm {
+// 		rf.currentTerm = rv.Term
+// 		rf.votedFor = -1
+// 		stepDown = true
+// 	}
+
+// 	if rf.role == Leader && stepDown == false {
+// 		return &RequestVoteReply {
+// 			Term: rf.currentTerm,
+// 			VoteGranted: false,
+// 		}, false
+// 	}
+// }
