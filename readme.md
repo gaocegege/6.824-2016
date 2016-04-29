@@ -1,7 +1,10 @@
 # 6.824-2016
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/gaocegege/6.824-2016)](https://goreportcard.com/report/github.com/gaocegege/6.824-2016)
-![MIT-6.824-brightgreen](https://img.shields.io/badge/MIT-6.824-brightgreen.svg)
+[![MIT 6.824][course-badge]][course-link]
+
+[course-badge]: https://img.shields.io/badge/MIT-6.824-brightgreen.svg
+[course-link]: https://pdos.csail.mit.edu/6.824
 
 Implementation for MIT 6.824 Distributed System 2016
 
@@ -15,4 +18,4 @@ Implementation for MIT 6.824 Distributed System 2016
 
 ## Timeline
 
-1. [Finish Lab1](https://github.com/gaocegege/6.824-2016/tree/lab1)
+1. [Finish Lab1](https://github.com/gaocegege/6.824-2016/releases/tag/lab1-done)
